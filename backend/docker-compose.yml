@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: saleor-postgres
+    environment:
+      POSTGRES_DB: saleor
+      POSTGRES_USER: saleor
+      POSTGRES_PASSWORD: saleor_password_secure
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saleor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: saleor-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Saleor API
+  saleor:
+    image: ghcr.io/saleor/saleor:3.19
+    container_name: saleor-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: postgresql://saleor:saleor_password_secure@postgres:5432/saleor
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      # Saleor settings
+      DEBUG: "True"
+      SECRET_KEY: "your-secret-key-change-in-production"
+      ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0"
+      # Email (disabled for local dev)
+      EMAIL_BACKEND: "django.core.mail.backends.console.EmailBackend"
+      # CORS & Storefront
+      ALLOWED_CLIENT_HOSTS: "localhost:3000,127.0.0.1:3000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - saleor_media:/app/media
+    command: >
+      sh -c "
+      python manage.py migrate &&
+      python manage.py create_default_shop --shop-name 'Boucherie Moderne' &&
+      python manage.py runserver 0.0.0.0:8000
+      "
+
+  # Saleor Admin (Web UI)
+  saleor-admin:
+    image: ghcr.io/saleor/saleor-dashboard:latest
+    container_name: saleor-admin
+    depends_on:
+      - saleor
+    environment:
+      REACT_APP_API_URL: http://localhost:8000/graphql/
+    ports:
+      - "9000:80"
+
+volumes:
+  postgres_data:
+  saleor_media:
+
+networks:
+  default:
+    name: saleor-network
